@@ -2,9 +2,9 @@
 // email_config.php - תיקון ל-WAMP עם אפשרות Gmail SMTP
 
 // הגדרות Gmail SMTP (אם תרצה להשתמש)
-define('USE_GMAIL_SMTP', false); // שנה ל-true אם תרצה Gmail
-define('GMAIL_USERNAME', 'your-email@gmail.com'); // החלף!
-define('GMAIL_APP_PASSWORD', 'your-app-password'); // החלף!
+define('USE_GMAIL_SMTP', true); // Enable Gmail SMTP
+define('GMAIL_USERNAME', 'your-email@gmail.com'); // Replace with your Gmail
+define('GMAIL_APP_PASSWORD', 'your-app-password'); // Replace with your app password
 
 /**
  * פונקציה משופרת לשליחת מיילים - תיקון ל-WAMP
@@ -70,9 +70,36 @@ function sendEmail($to, $subject, $message, $isHtml = false) {
  * פונקציה לשליחה דרך Gmail SMTP (אופציונלי)
  */
 function sendEmailViaGmail($to, $subject, $message, $isHtml = false) {
-    // TODO: יישום PHPMailer עם Gmail
-    error_log("DEBUG: Gmail SMTP not implemented yet");
-    return simulateEmailSend($to, $subject, $message);
+    require_once 'PHPMailer/PHPMailer.php';
+    require_once 'PHPMailer/SMTP.php';
+    require_once 'PHPMailer/Exception.php';
+    
+    $mail = new PHPMailer\PHPMailer\PHPMailer(true);
+    
+    try {
+        $mail->isSMTP();
+        $mail->Host = 'smtp.gmail.com';
+        $mail->SMTPAuth = true;
+        $mail->Username = GMAIL_USERNAME;
+        $mail->Password = GMAIL_APP_PASSWORD;
+        $mail->SMTPSecure = PHPMailer\PHPMailer\PHPMailer::ENCRYPTION_STARTTLS;
+        $mail->Port = 587;
+        $mail->CharSet = 'UTF-8';
+        
+        $mail->setFrom(GMAIL_USERNAME, 'TasteCraft');
+        $mail->addAddress($to);
+        
+        $mail->isHTML($isHtml);
+        $mail->Subject = $subject;
+        $mail->Body = $message;
+        
+        $mail->send();
+        error_log("SUCCESS: Email sent via Gmail SMTP to: $to");
+        return true;
+    } catch (Exception $e) {
+        error_log("ERROR: Gmail SMTP failed: {$mail->ErrorInfo}");
+        return simulateEmailSend($to, $subject, $message);
+    }
 }
 
 /**

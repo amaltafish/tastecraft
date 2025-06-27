@@ -91,46 +91,73 @@ function getUserWaitlists($con, $userId) {
 }
 
 function getUserNotifications($con, $userId) {
-    $notificationsSql = "SELECT n.*, w.workshopName,
-                         CASE 
-                             WHEN n.type = 'spot_available_24h' AND n.status = 'unread' 
-                             AND n.createdAt > DATE_SUB(NOW(), INTERVAL 24 HOUR) THEN 1
-                             ELSE 0
-                         END as is_urgent,
-                         CASE 
-                             WHEN n.type = 'spot_available_24h' AND n.status = 'unread' THEN 
-                                 GREATEST(0, 24 - TIMESTAMPDIFF(HOUR, n.createdAt, NOW()))
-                             ELSE NULL
-                         END as hours_remaining
-                         FROM notifications n
-                         LEFT JOIN workshops w ON n.workshopId = w.workshopId
-                         WHERE n.id = ? 
-                         AND n.type IN ('spot_available', 'waitlist', 'spot_available_24h', 'waitlist_expired', 'refund')
-                         ORDER BY 
-                             CASE 
-                                 WHEN n.type = 'spot_available_24h' AND n.createdAt > DATE_SUB(NOW(), INTERVAL 24 HOUR) AND n.status = 'unread' THEN 0
-                                 ELSE 1
-                             END ASC, 
-                             n.createdAt DESC";
-    $notificationsStmt = $con->prepare($notificationsSql);
-    $notificationsStmt->bind_param("i", $userId);
-    $notificationsStmt->execute();
-    $notifications = $notificationsStmt->get_result();
-
-    // חישוב התראות דחופות
-    $urgentCount = 0;
-    $notificationsArray = [];
-    while ($notification = $notifications->fetch_assoc()) {
-        if ($notification['is_urgent'] == 1) {
-            $urgentCount++;
-        }
-        $notificationsArray[] = $notification;
-    }
+    // Start transaction to ensure consistency
+    $con->begin_transaction();
     
-    return [
-        'notifications' => $notificationsArray,
-        'urgentCount' => $urgentCount
-    ];
+    try {
+        $notificationsSql = "SELECT n.*, w.workshopName,
+                            CASE 
+                                WHEN n.type = 'spot_available_24h' AND n.status = 'unread' 
+                                AND n.createdAt > DATE_SUB(NOW(), INTERVAL 24 HOUR) THEN 1
+                                ELSE 0
+                            END as is_urgent,
+                            CASE 
+                                WHEN n.type = 'spot_available_24h' AND n.status = 'unread' THEN 
+                                    GREATEST(0, 24 - TIMESTAMPDIFF(HOUR, n.createdAt, NOW()))
+                                ELSE NULL
+                            END as hours_remaining
+                            FROM notifications n
+                            LEFT JOIN workshops w ON n.workshopId = w.workshopId
+                            WHERE n.id = ? 
+                            AND n.type IN ('spot_available', 'waitlist', 'spot_available_24h', 'waitlist_expired', 'refund')
+                            ORDER BY 
+                                CASE 
+                                    WHEN n.type = 'spot_available_24h' AND n.createdAt > DATE_SUB(NOW(), INTERVAL 24 HOUR) AND n.status = 'unread' THEN 0
+                                    ELSE 1
+                                END ASC, 
+                                n.createdAt DESC";
+        
+        $notificationsStmt = $con->prepare($notificationsSql);
+        $notificationsStmt->bind_param("i", $userId);
+        $notificationsStmt->execute();
+        $notifications = $notificationsStmt->get_result();
+
+        // Mark spot_available_24h notifications as seen
+        $updateSql = "UPDATE notifications 
+                     SET status = 'seen'
+                     WHERE id = ? 
+                     AND type = 'spot_available_24h' 
+                     AND status = 'unread'
+                     AND createdAt <= NOW()";
+        
+        $updateStmt = $con->prepare($updateSql);
+        $updateStmt->bind_param("i", $userId);
+        $updateStmt->execute();
+
+        // Calculate urgent notifications and build array
+        $urgentCount = 0;
+        $notificationsArray = [];
+        while ($notification = $notifications->fetch_assoc()) {
+            if ($notification['is_urgent'] == 1) {
+                $urgentCount++;
+            }
+            $notificationsArray[] = $notification;
+        }
+
+        $con->commit();
+        
+        return [
+            'notifications' => $notificationsArray,
+            'urgentCount' => $urgentCount
+        ];
+    } catch (Exception $e) {
+        $con->rollback();
+        error_log("Error in getUserNotifications: " . $e->getMessage());
+        return [
+            'notifications' => [],
+            'urgentCount' => 0
+        ];
+    }
 }
 
 function getUserReviews($con, $userId) {
