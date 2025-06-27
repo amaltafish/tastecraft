@@ -1,0 +1,402 @@
+/* profile/profile_styles.css - עיצוב פרופיל */
+
+body {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    background-color: #FEFAF7;
+    margin: 0;
+    padding: 0;
+    color: #333;
+}
+
+.navbar {
+    background-color: transparent;
+    color: black;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 30px;
+    box-shadow: none;
+}
+
+.navbar a {
+    color: black;
+    text-decoration: none;
+    margin: 0 15px;
+    font-weight: bold;
+    transition: 0.3s;
+    font-size: 16px;
+}
+
+.navbar a:hover {
+    color: black;
+    font-size: 18px;
+}
+
+.navbar .icons img {
+    width: 30px;
+    margin-left: 15px;
+    cursor: pointer;
+    filter: grayscale(100%);
+    border-radius: 50%;
+}
+
+.navbar .icons img:hover {
+    background-color: #BAB3AE;
+}
+
+.admin-disabled {
+    color: #999 !important;
+    pointer-events: none;
+    cursor: default;
+}
+
+.container {
+    max-width: 1200px;
+    margin: 30px auto;
+    padding: 0 20px;
+}
+
+.page-title {
+    font-size: 32px;
+    margin-bottom: 20px;
+    text-align: center;
+}
+
+.tabs {
+    display: flex;
+    margin-bottom: 1.5rem;
+    border-bottom: 1px solid #dee2e6;
+}
+
+.tab {
+    padding: 0.75rem 1.5rem;
+    cursor: pointer;
+    border: 1px solid transparent;
+    border-top-left-radius: 0.25rem;
+    border-top-right-radius: 0.25rem;
+    font-weight: 500;
+    margin-bottom: -1px;
+    transition: all 0.2s;
+}
+
+.tab.active {
+    border-color: #dee2e6 #dee2e6 #fff;
+    background-color: #fff;
+    color: #333;
+}
+
+.tab:hover:not(.active) {
+    background-color: #f8f9fa;
+}
+
+.tab-content {
+    display: none;
+    padding: 1.5rem;
+    background-color: #fff;
+    border-radius: 0.25rem;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
+}
+
+.tab-content.active {
+    display: block;
+}
+
+.alert {
+    padding: 15px;
+    margin-bottom: 20px;
+    border-radius: 4px;
+}
+
+.alert-success {
+    background-color: #d4edda;
+    color: #155724;
+}
+
+.alert-danger {
+    background-color: #f8d7da;
+    color: #721c24;
+}
+
+.card {
+    background-color: white;
+    border-radius: 8px;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+    padding: 20px;
+    margin-bottom: 20px;
+}
+
+.card-title {
+    font-size: 24px;
+    margin-bottom: 20px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid #eee;
+}
+
+.form-group {
+    margin-bottom: 20px;
+}
+
+label {
+    display: block;
+    margin-bottom: 5px;
+    font-weight: bold;
+}
+
+input[type="text"],
+input[type="email"],
+input[type="password"],
+textarea {
+    width: 100%;
+    padding: 10px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    font-size: 16px;
+}
+
+button {
+    background-color: #f5eada;
+    color: #333;
+    border: none;
+    padding: 10px 20px;
+    border-radius: 4px;
+    font-size: 16px;
+    cursor: pointer;
+    transition: background-color 0.3s;
+}
+
+button:hover {
+    background-color: orange;
+}
+
+.workshop-card {
+    display: flex;
+    margin-bottom: 20px;
+    border-radius: 8px;
+    overflow: hidden;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+}
+
+.workshop-image {
+    width: 200px;
+    height: 150px;
+    object-fit: cover;
+}
+
+.workshop-details {
+    flex: 1;
+    padding: 15px;
+    background-color: white;
+}
+
+.workshop-name {
+    font-size: 20px;
+    font-weight: bold;
+    margin-bottom: 10px;
+}
+
+.workshop-info {
+    color: #555;
+    margin-bottom: 5px;
+}
+
+.workshop-actions {
+    margin-top: 15px;
+}
+
+.btn-cancel {
+    background-color: #f8d7da;
+    color: #721c24;
+}
+
+.btn-cancel:hover {
+    background-color: #f5c6cb;
+}
+
+.btn-review {
+    background-color: #d4edda;
+    color: #155724;
+}
+
+.btn-review:hover {
+    background-color: #c3e6cb;
+}
+
+.review-form {
+    margin-top: 20px;
+    padding: 20px;
+    background-color: #f9f9f9;
+    border-radius: 8px;
+    display: none;
+}
+
+.stars {
+    display: inline-block;
+    direction: rtl;
+    margin-bottom: 15px;
+}
+
+.stars input[type="radio"] {
+    display: none;
+}
+
+.stars label {
+    display: inline-block;
+    cursor: pointer;
+    font-size: 25px;
+    color: #ccc;
+    transition: color 0.2s;
+}
+
+.stars label:hover,
+.stars label:hover ~ label,
+.stars input[type="radio"]:checked ~ label {
+    color: #f4b400;
+}
+
+.notification-item {
+    padding: 15px;
+    border-bottom: 1px solid #eee;
+    margin-bottom: 10px;
+    border-radius: 8px;
+}
+
+.notification-new {
+    background-color: #f8f9fa;
+    border-left: 4px solid #f4b400;
+}
+
+.notification-urgent {
+    background-color: #fff3cd;
+    border-left: 4px solid #dc3545;
+    border: 2px solid #ffc107;
+    animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+    0% { opacity: 1; }
+    50% { opacity: 0.8; }
+    100% { opacity: 1; }
+}
+
+.notification-date {
+    color: #888;
+    font-size: 14px;
+    margin-bottom: 5px;
+}
+
+.notification-text {
+    margin-bottom: 10px;
+}
+
+.notification-actions {
+    display: flex;
+    gap: 10px;
+    margin-top: 15px;
+}
+
+.btn-small {
+    padding: 8px 15px;
+    font-size: 14px;
+}
+
+.btn-confirm {
+    background-color: #28a745;
+    color: white;
+}
+
+.btn-confirm:hover {
+    background-color: #218838;
+}
+
+.btn-decline {
+    background-color: #dc3545;
+    color: white;
+}
+
+.btn-decline:hover {
+    background-color: #c82333;
+}
+
+.footer {
+    text-align: center;
+    padding: 20px;
+    background-color: #f1f1f1;
+    margin-top: 50px;
+}
+
+.footer .pfooter {
+    margin: 5px 0;
+}
+
+.past-workshop {
+    opacity: 0.7;
+}
+
+.status-tag {
+    display: inline-block;
+    padding: 5px 10px;
+    border-radius: 4px;
+    font-size: 14px;
+    margin-left: 10px;
+}
+
+.status-upcoming {
+    background-color: #cce5ff;
+    color: #004085;
+}
+
+.status-completed {
+    background-color: #d4edda;
+    color: #155724;
+}
+
+.status-urgent {
+    background-color: #dc3545 !important;
+    color: white !important;
+}
+
+.status-waiting {
+    background-color: #ffc107 !important;
+    color: #333 !important;
+}
+
+.urgent-timer {
+    background-color: #dc3545;
+    color: white;
+    padding: 10px;
+    border-radius: 5px;
+    text-align: center;
+    font-weight: bold;
+    margin: 10px 0;
+    font-size: 18px;
+}
+
+.notification-badge {
+    background-color: #dc3545;
+    color: white;
+    border-radius: 50%;
+    padding: 2px 6px;
+    font-size: 12px;
+    font-weight: bold;
+    margin-right: 5px;
+}
+
+.waitlist-info {
+    background-color: #fff3cd;
+    color: #856404;
+    padding: 15px;
+    border-radius: 8px;
+    margin-top: 15px;
+    border-left: 4px solid #ffc107;
+}
+
+.countdown-display {
+    font-size: 20px;
+    font-weight: bold;
+    color: #dc3545;
+    background-color: #fff;
+    padding: 10px;
+    border-radius: 5px;
+    text-align: center;
+    margin: 10px 0;
+}
