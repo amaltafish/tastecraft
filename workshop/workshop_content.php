@@ -14,25 +14,29 @@
             <p><span class="meta-icon">🕒</span> שעה: <?php echo date('H:i', strtotime($workshop['date'])); ?></p>
             <p><span class="meta-icon">📍</span> מיקום: <?php echo $workshop['location']; ?></p>
             <p><span class="meta-icon">💰</span> מחיר: ₪<?php echo $workshop['price']; ?></p>
-            <p><span class="meta-icon">👥</span> נרשמו: <?php echo $workshop['registeredCount']; ?> / <?php echo $workshop['maxParticipants']; ?></p>
-            <?php if ($workshop['lockedSeats'] > 0): ?>
-            <p><span class="meta-icon">🔒</span> מקומות שמורים: <?php echo $workshop['lockedSeats']; ?> (ממתינים לאישור)</p>
+            <p><span class="meta-icon">👥</span> נרשמו: <?php echo $seats['registered']; ?> / <?php echo $seats['max']; ?></p>
+            
+            <?php if ($seats['locked'] > 0): ?>
+                <p><span class="meta-icon">🔒</span> מקומות שמורים: <?php echo $seats['locked']; ?> (ממתינים לאישור)</p>
             <?php endif; ?>
             
             <div class="availability">
-                <?php if ($isPastWorkshop): ?>
+                <?php 
+                if ($isPastWorkshop): ?>
                     <span class="sold-out">הסדנה כבר התקיימה</span>
                 <?php elseif ($userHas24hNotification): ?>
                     <span class="special-offer">⭐ זמין עבורך במיוחד! (יש לך 24 שעות לאישור)</span>
-                <?php elseif ($availableSeats > 5): ?>
-                    <span class="available">זמין (<?php echo $availableSeats; ?> מקומות נותרו)</span>
-                <?php elseif ($availableSeats > 0): ?>
-                    <span class="limited">זמינות מוגבלת (רק <?php echo $availableSeats; ?> מקומות נותרו)</span>
+                <?php elseif ($seats['available'] > 0 && $seats['locked'] == 0): ?>
+                    <?php if ($seats['available'] > 5): ?>
+                        <span class="available">זמין (<?php echo $seats['available']; ?> מקומות נותרו)</span>
+                    <?php else: ?>
+                        <span class="limited">זמינות מוגבלת (רק <?php echo $seats['available']; ?> מקומות נותרו)</span>
+                    <?php endif; ?>
                 <?php else: ?>
                     <span class="sold-out">הסדנה מלאה</span>
-                    <?php if ($workshop['lockedSeats'] > 0): ?>
+                    <?php if ($seats['locked'] > 0): ?>
                         <div class="locked-seats-info">
-                            🔒 <?php echo $workshop['lockedSeats']; ?> מקומות נעולים לאישור (24 שעות)
+                            🔒 <?php echo $seats['locked']; ?> מקומות נעולים לאישור (24 שעות)
                         </div>
                     <?php endif; ?>
                 <?php endif; ?>
@@ -69,9 +73,13 @@
             <?php elseif ($isPastWorkshop): ?>
                 <button class="btn btn-disabled">הסדנה כבר התקיימה</button>
             <?php elseif ($userHas24hNotification): ?>
-                <a href="profile.php" class="btn btn-urgent">⏰ אשר עכשיו - זמן מוגבל!</a>
+                <form method="post" action="profile.php" style="display: inline;">
+                    <input type="hidden" name="notificationId" value="<?php echo $notification24hData['notificationId']; ?>">
+                    <input type="hidden" name="workshopId" value="<?php echo $workshopId; ?>">
+                    <button type="submit" name="confirmWaitlistSpot" class="btn btn-urgent">⏰ אשר והמשך לתשלום</button>
+                </form>
                 <a href="workshop.php" class="btn btn-secondary">חזרה לסדנאות</a>
-            <?php elseif ($availableSeats > 0): ?>
+            <?php elseif ($seats['available'] > 0 && $seats['locked'] == 0 && !$isInWaitlist): ?>
                 <a href="cart.php?action=add&workshopId=<?php echo $workshopId; ?>" class="btn btn-primary">הוסף לסל</a>
                 <a href="workshop.php" class="btn btn-secondary">חזרה לסדנאות</a>
             <?php elseif ($isInWaitlist): ?>
@@ -96,11 +104,18 @@
         <div class="waitlist-info <?php echo $waitlistStatus === 'notified' ? 'urgent' : ''; ?>">
             <p><strong>
                 <?php if ($waitlistStatus === 'notified'): ?>
-                    🔔 נשלחה לך התראה לאישור השתתפות!
+                    <?php if (strpos($waitlistData['message'], 'הוארכה תקופת ההרשמה') !== false): ?>
+                        🔄 הוארכה תקופת ההרשמה שלך! קיבלת 24 שעות נוספות.
+                    <?php else: ?>
+                        🔔 נשלחה לך התראה לאישור השתתפות!
+                    <?php endif; ?>
                 <?php elseif ($waitlistStatus === 'declined'): ?>
                     📋 דחית הזדמנות קודמת אך אתה עדיין ברשימת ההמתנה.
                 <?php else: ?>
                     📋 אתה במיקום <?php echo $waitlistPosition; ?> ברשימת ההמתנה לסדנה זו.
+                    <?php if ($waitlistPosition == 1 && $seats['available'] > 0): ?>
+                        <br>✨ אתה הבא בתור! תקבל התראה ברגע שתוכל להירשם.
+                    <?php endif; ?>
                 <?php endif; ?>
             </strong></p>
             
@@ -108,14 +123,25 @@
                 <div class="urgent-timer">
                     ⏰ נותרו <?php echo $hoursRemaining; ?> שעות לאישור!
                 </div>
-                <p style="color: #721c24; font-weight: bold;">⚠️ יש לך 24 שעות לאשר את השתתפותך דרך הפרופיל שלך!</p>
+                <p style="color: #721c24; font-weight: bold;">
+                    ⚠️ יש לך 24 שעות לאשר את השתתפותך דרך הפרופיל שלך!
+                    <?php if ($waitlistPosition == 1 && !isset($waitlistData['other_waitlist_users'])): ?>
+                        <br>💡 אם לא תספיק לאשר, תקבל אוטומטית 24 שעות נוספות כי אתה היחיד ברשימה.
+                    <?php endif; ?>
+                </p>
                 <div style="margin-top: 15px;">
                     <a href="profile.php" class="btn btn-primary">עבור לפרופיל לאישור מיידי</a>
                 </div>
             <?php elseif ($waitlistStatus === 'waiting'): ?>
                 <p>💡 נשלח לך אימייל ותקבל התראה באתר ברגע שיתפנה מקום.<br>
                 יהיו לך 24 שעות בדיוק לאשר את השתתפותך.</p>
-                <p><strong>🕐 זמן התגובה חשוב!</strong> אם לא תגיב תוך 24 שעות, המקום יועבר למשתמש הבא ברשימה.</p>
+                <p><strong>🕐 זמן התגובה חשוב!</strong> 
+                <?php if ($waitlistPosition == 1): ?>
+                    אם לא תגיב תוך 24 שעות ואתה היחיד ברשימה, תקבל אוטומטית הארכה של 24 שעות נוספות.
+                <?php else: ?>
+                    אם לא תגיב תוך 24 שעות, המקום יועבר למשתמש הבא ברשימה.
+                <?php endif; ?>
+                </p>
             <?php elseif ($waitlistStatus === 'declined'): ?>
                 <p>💡 דחית הזדמנות קודמת אך אתה עדיין ברשימת ההמתנה.<br>
                 תקבל התראה על הזדמנויות חדשות שיתפנו.</p>

@@ -27,48 +27,53 @@ function getWorkshopData($con, $workshopId, $userId) {
     $workshop = $result->fetch_assoc();
     
     // חישוב מקומות פנויים עם מקומות נעולים
-    $availableSeats = $workshop['maxParticipants'] - $workshop['registeredCount'] - $workshop['lockedSeats'];
+    $seats = getAvailableSeats($con, $workshopId);
+    $workshop = array_merge($workshop, $seats); // Add seats data to workshop array
 
-    // שליפת האלרגיות של הסדנה
+    // Get allergies
     $allergies = getWorkshopAllergies($con, $workshopId);
+
+    // Get user-specific data
+    $isRegistered = checkRegistration($con, $userId, $workshopId);
+    $isInCart = checkInCart($con, $userId, $workshopId);
+    $hasReview = false;
+    $userReview = null;
+    $isPastWorkshop = strtotime($workshop['date']) < time();
     
-    // שליפת ביקורות ודירוגים
-    $reviewsData = getWorkshopReviews($con, $workshopId);
+    // Get waitlist data
+    $waitlistData = getWaitlistData($con, $userId, $workshopId);
+    $isInWaitlist = $waitlistData !== null;
+    $waitlistStatus = $isInWaitlist ? $waitlistData['status'] : null;
+    $waitlistPosition = $isInWaitlist && $waitlistStatus === 'waiting' ? getWaitlistPosition($con, $userId, $workshopId) : null;
     
-    // בדיקות משתמש
-    $userChecks = getUserWorkshopStatus($con, $userId, $workshopId);
+    // Get 24h notification data
+    $notification24hData = get24hNotificationData($con, $userId, $workshopId);
+    $userHas24hNotification = $notification24hData !== null;
+    $hoursRemaining24h = $userHas24hNotification ? getHoursRemaining($notification24hData['createdAt']) : null;
     
-    // בדיקה אם הסדנה כבר התקיימה
-    $workshopDate = new DateTime($workshop['date']);
-    $currentDate = new DateTime();
-    $isPastWorkshop = $currentDate > $workshopDate;
-    
-    // בדיקת סטטוס רשימת המתנה
-    $waitlistData = getUserWaitlistStatus($con, $userId, $workshopId);
-    
-    // בדיקה אם המשתמש מקבל התראה של 24 שעות
-    $notification24hData = getUser24hNotification($con, $userId, $workshopId);
+    // Reviews data
+    if ($isRegistered && $isPastWorkshop) {
+        $userReview = getUserReview($con, $userId, $workshopId);
+        $hasReview = $userReview !== null;
+    }
     
     return [
         'workshop' => $workshop,
-        'availableSeats' => $availableSeats,
         'allergies' => $allergies,
-        'reviews' => $reviewsData['reviews'],
-        'avgRating' => $reviewsData['avgRating'],
-        'isRegistered' => $userChecks['isRegistered'],
-        'isInCart' => $userChecks['isInCart'],
-        'hasReview' => $userChecks['hasReview'],
-        'userReview' => $userChecks['userReview'],
+        'isRegistered' => $isRegistered,
+        'isInCart' => $isInCart,
+        'hasReview' => $hasReview,
+        'userReview' => $userReview,
         'isPastWorkshop' => $isPastWorkshop,
-        'isInWaitlist' => $waitlistData['isInWaitlist'],
-        'waitlistData' => $waitlistData['waitlistData'],
-        'waitlistStatus' => $waitlistData['waitlistStatus'],
-        'hoursRemaining' => $waitlistData['hoursRemaining'],
-        'minutesRemaining' => $waitlistData['minutesRemaining'],
-        'waitlistPosition' => $waitlistData['waitlistPosition'],
-        'userHas24hNotification' => $notification24hData['hasNotification'],
-        'notification24hData' => $notification24hData['data'],
-        'hoursRemaining24h' => $notification24hData['hoursRemaining']
+        'reviews' => getWorkshopReviews($con, $workshopId),
+        'avgRating' => calculateAverageRating($con, $workshopId),
+        'isInWaitlist' => $isInWaitlist,
+        'waitlistData' => $waitlistData,
+        'waitlistStatus' => $waitlistStatus,
+        'waitlistPosition' => $waitlistPosition,
+        'userHas24hNotification' => $userHas24hNotification,
+        'notification24hData' => $notification24hData,
+        'hoursRemaining24h' => $hoursRemaining24h
     ];
 }
 
@@ -92,31 +97,16 @@ function getWorkshopAllergies($con, $workshopId) {
 }
 
 function getWorkshopReviews($con, $workshopId) {
-    // שליפת ביקורות
-    $reviewsSql = "SELECT r.*, u.Fname, u.Lname
-                  FROM reviews r
-                  JOIN users u ON r.id = u.id
-                  WHERE r.workshopId = ?
-                  ORDER BY r.createdAt DESC";
+    $sql = "SELECT r.*, u.Fname, u.Lname 
+            FROM reviews r
+            JOIN users u ON r.id = u.id
+            WHERE r.workshopId = ?
+            ORDER BY r.createdAt DESC";
 
-    $reviewsStmt = $con->prepare($reviewsSql);
-    $reviewsStmt->bind_param("i", $workshopId);
-    $reviewsStmt->execute();
-    $reviewsResult = $reviewsStmt->get_result();
-
-    // חישוב דירוג ממוצע
-    $averageRatingSql = "SELECT AVG(rating) as avgRating FROM reviews WHERE workshopId = ?";
-    $avgRatingStmt = $con->prepare($averageRatingSql);
-    $avgRatingStmt->bind_param("i", $workshopId);
-    $avgRatingStmt->execute();
-    $avgRatingResult = $avgRatingStmt->get_result();
-    $avgRating = $avgRatingResult->fetch_assoc()['avgRating'] ?? 0;
-    $avgRating = round($avgRating, 1);
-    
-    return [
-        'reviews' => $reviewsResult,
-        'avgRating' => $avgRating
-    ];
+    $stmt = $con->prepare($sql);
+    $stmt->bind_param("i", $workshopId);
+    $stmt->execute();
+    return $stmt->get_result();
 }
 
 function getUserWorkshopStatus($con, $userId, $workshopId) {
@@ -231,5 +221,108 @@ function getUser24hNotification($con, $userId, $workshopId) {
         'data' => $notification24hData,
         'hoursRemaining' => $hoursRemaining24h
     ];
+}
+
+function checkRegistration($con, $userId, $workshopId) {
+    $sql = "SELECT * FROM registration WHERE id = ? AND workshopId = ?";
+    $stmt = $con->prepare($sql);
+    $stmt->bind_param("ii", $userId, $workshopId);
+    $stmt->execute();
+    $result = $stmt->get_result();
+    return $result->num_rows > 0;
+}
+
+function checkInCart($con, $userId, $workshopId) {
+    return isset($_SESSION['cart']) && is_array($_SESSION['cart']) && in_array($workshopId, $_SESSION['cart']);
+}
+
+function getWaitlistData($con, $userId, $workshopId) {
+    $sql = "SELECT n.*, 
+            CASE 
+                WHEN n.status = 'notified' THEN 
+                    GREATEST(0, 24 - TIMESTAMPDIFF(HOUR, n.createdAt, NOW()))
+                ELSE NULL
+            END as hours_remaining,
+            CASE 
+                WHEN n.status = 'notified' THEN 
+                    GREATEST(0, (24 * 60) - TIMESTAMPDIFF(MINUTE, n.createdAt, NOW()))
+                ELSE NULL
+            END as minutes_remaining
+            FROM notifications n
+            WHERE n.id = ? AND n.workshopId = ? 
+            AND n.type = 'waitlist' 
+            AND n.status IN ('waiting', 'notified', 'declined')";
+
+    $stmt = $con->prepare($sql);
+    $stmt->bind_param("ii", $userId, $workshopId);
+    $stmt->execute();
+    $result = $stmt->get_result();
+    
+    return $result->num_rows > 0 ? $result->fetch_assoc() : null;
+}
+
+function getWaitlistPosition($con, $userId, $workshopId) {
+    $sql = "SELECT COUNT(*) + 1 as position 
+            FROM notifications 
+            WHERE workshopId = ? 
+            AND type = 'waitlist' 
+            AND status = 'waiting'
+            AND createdAt < (
+                SELECT createdAt 
+                FROM notifications 
+                WHERE id = ? 
+                AND workshopId = ? 
+                AND type = 'waitlist'
+                AND status = 'waiting'
+            )";
+    
+    $stmt = $con->prepare($sql);
+    $stmt->bind_param("iii", $workshopId, $userId, $workshopId);
+    $stmt->execute();
+    $result = $stmt->get_result();
+    
+    return $result->num_rows > 0 ? $result->fetch_assoc()['position'] : null;
+}
+
+function get24hNotificationData($con, $userId, $workshopId) {
+    $sql = "SELECT * FROM notifications 
+            WHERE id = ? AND workshopId = ? 
+            AND type = 'spot_available_24h' 
+            AND status = 'unread' 
+            AND createdAt > DATE_SUB(NOW(), INTERVAL 24 HOUR)";
+            
+    $stmt = $con->prepare($sql);
+    $stmt->bind_param("ii", $userId, $workshopId);
+    $stmt->execute();
+    $result = $stmt->get_result();
+    
+    return $result->num_rows > 0 ? $result->fetch_assoc() : null;
+}
+
+function getHoursRemaining($createdAt) {
+    $created = new DateTime($createdAt);
+    $current = new DateTime();
+    $interval = $created->diff($current);
+    $hoursElapsed = ($interval->days * 24) + $interval->h + ($interval->i / 60);
+    return max(0, 24 - $hoursElapsed);
+}
+
+function getUserReview($con, $userId, $workshopId) {
+    $sql = "SELECT * FROM reviews WHERE id = ? AND workshopId = ?";
+    $stmt = $con->prepare($sql);
+    $stmt->bind_param("ii", $userId, $workshopId);
+    $stmt->execute();
+    $result = $stmt->get_result();
+    return $result->num_rows > 0 ? $result->fetch_assoc() : null;
+}
+
+function calculateAverageRating($con, $workshopId) {
+    $sql = "SELECT AVG(rating) as avgRating FROM reviews WHERE workshopId = ?";
+    $stmt = $con->prepare($sql);
+    $stmt->bind_param("i", $workshopId);
+    $stmt->execute();
+    $result = $stmt->get_result();
+    $avgRating = $result->fetch_assoc()['avgRating'] ?? 0;
+    return round($avgRating, 1);
 }
 ?>

@@ -17,7 +17,13 @@ $isAdmin = isAdmin();
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $result = handleProfileActions($con, $userId);
     if ($result['redirect']) {
-        header("Location: profile.php?" . http_build_query($result['params']));
+        $redirectParams = [];
+        foreach ($result['params'] as $key => $value) {
+            $redirectParams[] = urlencode($key) . '=' . urlencode($value);
+        }
+        $location = $result['location'] ?? 'profile.php';
+        $redirectUrl = $location . (!empty($redirectParams) ? '?' . implode('&', $redirectParams) : '');
+        header("Location: " . $redirectUrl);
         exit();
     }
 }

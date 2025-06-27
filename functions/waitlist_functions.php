@@ -4,6 +4,12 @@
 function automaticNotifyNextInWaitlist($con, $workshopId) {
     error_log("DEBUG: AUTO - Looking for next user in waitlist for workshop $workshopId");
     
+    // Clean up any stale notifications first
+    safeCleanupNotifications($con);
+    
+    // Set transaction isolation level to SERIALIZABLE for strongest consistency
+    $con->query("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE");
+    
     // 🔒 תיקון Race Condition: התחלת transaction
     $con->begin_transaction();
     
@@ -13,6 +19,11 @@ function automaticNotifyNextInWaitlist($con, $workshopId) {
         $lockStmt = $con->prepare($lockSql);
         $lockStmt->bind_param("i", $workshopId);
         $lockStmt->execute();
+        $lockResult = $lockStmt->get_result();
+        $lockStmt->close();
+        $lockResult->free(); // Free the result set
+        
+        error_log("DEBUG: AUTO - Acquired row lock for workshop $workshopId");
         
         // בדיקה שלא קיימת התראה פעילה כבר לסדנה זו
         $existingActiveNotificationSql = "SELECT COUNT(*) as count 
@@ -27,6 +38,10 @@ function automaticNotifyNextInWaitlist($con, $workshopId) {
         $existingStmt->execute();
         $existingResult = $existingStmt->get_result();
         $existingCount = $existingResult->fetch_assoc()['count'];
+        $existingStmt->close();
+        $existingResult->free(); // Free the result set
+        
+        error_log("DEBUG: AUTO - Found $existingCount active 24h notifications for workshop $workshopId");
         
         if ($existingCount > 0) {
             error_log("DEBUG: AUTO - Already has active 24h notification for workshop $workshopId, skipping");
@@ -34,39 +49,13 @@ function automaticNotifyNextInWaitlist($con, $workshopId) {
             return false;
         }
         
-        // בדיקת קיבולת - ספירת מקומות רגילים + מקומות נעולים
-        $capacitySql = "SELECT w.maxParticipants, 
-                        COUNT(DISTINCT r.registrationId) AS registeredCount,
-                        COUNT(DISTINCT CASE 
-                            WHEN n.status = 'notified' AND n.type = 'waitlist' 
-                            AND n.createdAt > DATE_SUB(NOW(), INTERVAL 24 HOUR) 
-                            THEN n.id END) AS lockedSeats
-                        FROM workshops w
-                        LEFT JOIN registration r ON w.workshopId = r.workshopId
-                        LEFT JOIN notifications n ON w.workshopId = n.workshopId
-                        WHERE w.workshopId = ?
-                        GROUP BY w.workshopId
-                        FOR UPDATE";
+        $seats = getAvailableSeats($con, $workshopId);
+        $availableSeats = $seats['available'];
         
-        $capacityStmt = $con->prepare($capacitySql);
-        $capacityStmt->bind_param("i", $workshopId);
-        $capacityStmt->execute();
-        $capacityResult = $capacityStmt->get_result();
+        error_log("DEBUG: Workshop $workshopId capacity check - Max: {$seats['max']}, Registered: {$seats['registered']}, Locked: {$seats['locked']}, Available: $availableSeats");
         
-        if ($capacityResult->num_rows > 0) {
-            $workshop = $capacityResult->fetch_assoc();
-            $totalOccupied = $workshop['registeredCount'] + $workshop['lockedSeats'];
-            $availableSeats = $workshop['maxParticipants'] - $totalOccupied;
-            
-            error_log("DEBUG: Workshop $workshopId - Max: {$workshop['maxParticipants']}, Registered: {$workshop['registeredCount']}, Locked: {$workshop['lockedSeats']}, Available: $availableSeats");
-            
-            if ($availableSeats <= 0) {
-                error_log("DEBUG: AUTO - No available seats for workshop $workshopId");
-                $con->rollback();
-                return false;
-            }
-        } else {
-            error_log("DEBUG: AUTO - Workshop $workshopId not found");
+        if ($availableSeats <= 0) {
+            error_log("DEBUG: AUTO - No available seats for workshop $workshopId");
             $con->rollback();
             return false;
         }
@@ -83,6 +72,8 @@ function automaticNotifyNextInWaitlist($con, $workshopId) {
                        LIMIT 1
                        FOR UPDATE";
         
+        error_log("DEBUG: AUTO - Looking for next waiting user");
+        
         $nextUserStmt = $con->prepare($nextUserSql);
         $nextUserStmt->bind_param("i", $workshopId);
         $nextUserStmt->execute();
@@ -90,30 +81,9 @@ function automaticNotifyNextInWaitlist($con, $workshopId) {
         
         if ($nextResult->num_rows > 0) {
             $nextUser = $nextResult->fetch_assoc();
-            error_log("DEBUG: AUTO - Found next user: " . $nextUser['Fname'] . " (ID: " . $nextUser['id'] . ")");
+            error_log("DEBUG: AUTO - Found next user {$nextUser['id']} for workshop $workshopId");
             
-            // בדיקה כפולה שהמשתמש לא קיבל כבר התראה
-            $userExistingNotificationSql = "SELECT COUNT(*) as count 
-                                           FROM notifications 
-                                           WHERE id = ? 
-                                           AND workshopId = ? 
-                                           AND type = 'spot_available_24h' 
-                                           AND status = 'unread' 
-                                           AND createdAt > DATE_SUB(NOW(), INTERVAL 24 HOUR)
-                                           FOR UPDATE";
-            $userExistingStmt = $con->prepare($userExistingNotificationSql);
-            $userExistingStmt->bind_param("ii", $nextUser['id'], $workshopId);
-            $userExistingStmt->execute();
-            $userExistingResult = $userExistingStmt->get_result();
-            $userExistingCount = $userExistingResult->fetch_assoc()['count'];
-            
-            if ($userExistingCount > 0) {
-                error_log("DEBUG: AUTO - User {$nextUser['id']} already has active notification for workshop $workshopId, skipping");
-                $con->rollback();
-                return false;
-            }
-            
-            // נעילת המקום על ידי עדכון הסטטוס ל'notified'
+            // עדכון סטטוס בטבלת notifications
             $updateSql = "UPDATE notifications 
                          SET status = 'notified', 
                              message = CONCAT(message, ' - נשלחה הזדמנות ב: ', NOW()),
@@ -123,7 +93,9 @@ function automaticNotifyNextInWaitlist($con, $workshopId) {
             $updateStmt->bind_param("i", $nextUser['notificationId']);
             
             if ($updateStmt->execute()) {
-                // שליחת התראה 24h חדשה
+                error_log("DEBUG: AUTO - Updated waitlist notification status to 'notified'");
+                
+                // שליחת התראת 24 שעות
                 $notificationMessage = "🎉 התפנה מקום בסדנה: " . $nextUser['workshopName'] . "! יש לך 24 שעות לאשר השתתפותך.";
                 $notifSql = "INSERT INTO notifications (id, workshopId, message, type, status, createdAt) 
                             VALUES (?, ?, ?, 'spot_available_24h', 'unread', NOW())";
@@ -131,27 +103,33 @@ function automaticNotifyNextInWaitlist($con, $workshopId) {
                 $notifStmt->bind_param("iis", $nextUser['id'], $workshopId, $notificationMessage);
                 
                 if ($notifStmt->execute()) {
-                    error_log("DEBUG: AUTO - LOCKED seat and sent 24h notification to user " . $nextUser['id']);
+                    error_log("DEBUG: AUTO - Created 24h notification for user {$nextUser['id']}");
+                    $notifStmt->close();
+                    $con->commit();
                     
-                    // שליחת אימייל - רק פעם אחת!
+                    // שליחת אימייל
                     if (function_exists('mail')) {
                         $subject = "🎉 התפנה מקום בסדנה - יש לך 24 שעות! - TasteCraft";
-                        $emailMessage = "שלום {$nextUser['Fname']}, התפנה מקום בסדנה {$nextUser['workshopName']}. יש לך 24 שעות לאשר דרך הפרופיל שלך.";
+                        $emailMessage = "שלום " . $nextUser['Fname'] . ",\n\n" .
+                                      "התפנה מקום בסדנה: " . $nextUser['workshopName'] . "!\n" .
+                                      "יש לך 24 שעות בדיוק לאשר את השתתפותך.\n\n" .
+                                      "לאישור: היכנס לפרופיל האישי שלך באתר.\n\n" .
+                                      "שים לב: אם לא תאשר תוך 24 שעות, המקום יועבר למשתמש הבא ברשימה.\n\n" .
+                                      "בברכה,\nצוות TasteCraft";
+                        
                         $headers = "From: noreply@tastecraft.com\r\n";
                         @mail($nextUser['Email'], $subject, $emailMessage, $headers);
-                        error_log("DEBUG: AUTO - Email sent to " . $nextUser['Email']);
+                        error_log("DEBUG: AUTO - Sent email notification to {$nextUser['Email']}");
                     }
                     
-                    // 🔒 אישור Transaction
-                    $con->commit();
                     return true;
                 } else {
-                    error_log("ERROR: Failed to create 24h notification");
+                    error_log("ERROR: Failed to create 24h notification: " . $notifStmt->error);
                     $con->rollback();
                     return false;
                 }
             } else {
-                error_log("ERROR: Failed to update waitlist status");
+                error_log("ERROR: Failed to update waitlist notification: " . $updateStmt->error);
                 $con->rollback();
                 return false;
             }
@@ -160,7 +138,6 @@ function automaticNotifyNextInWaitlist($con, $workshopId) {
             $con->rollback();
             return false;
         }
-        
     } catch (Exception $e) {
         error_log("ERROR in automaticNotifyNextInWaitlist: " . $e->getMessage());
         $con->rollback();
@@ -194,8 +171,17 @@ function cleanExpiredWaitlists($con) {
 function handleExpiredNotificationsAutomatically($con) {
     error_log("DEBUG: AUTO - Checking for expired notifications");
     
+    // Clean up any stray notifications first
+    safeCleanupNotifications($con);
+    
     // מציאת התראות 24h שפג תוקפן
-    $expiredSql = "SELECT n.*, w.workshopName, u.Fname, u.Email
+    $expiredSql = "SELECT n.*, w.workshopName, u.Fname, u.Email,
+                   (SELECT COUNT(*) 
+                    FROM notifications n2 
+                    WHERE n2.workshopId = n.workshopId 
+                    AND n2.type = 'waitlist' 
+                    AND n2.status = 'waiting'
+                    AND n2.id != n.id) as other_waitlist_users
                   FROM notifications n
                   JOIN workshops w ON n.workshopId = w.workshopId
                   JOIN users u ON n.id = u.id
@@ -209,40 +195,69 @@ function handleExpiredNotificationsAutomatically($con) {
         while ($expired = $expiredResult->fetch_assoc()) {
             error_log("DEBUG: AUTO - Processing expired notification for user " . $expired['id']);
             
-            // 🔒 תיקון: transaction לטיפול באפס נתונים
             $con->begin_transaction();
             
             try {
-                // עדכון ההתראה לפג תוקף
-                $updateExpiredSql = "UPDATE notifications 
-                                    SET status = 'expired' 
-                                    WHERE notificationId = ?";
-                $updateExpiredStmt = $con->prepare($updateExpiredSql);
-                $updateExpiredStmt->bind_param("i", $expired['notificationId']);
-                $updateExpiredStmt->execute();
-                
-                // שחרור המקום הנעול - החזרת המשתמש לסטטוס 'waiting'
-                $backToWaitingSql = "UPDATE notifications 
-                                    SET status = 'waiting',
-                                        message = CONCAT(message, ' - חזר לרשימה כי פג תוקף ב: ', NOW()),
-                                        createdAt = NOW()
-                                    WHERE id = ? AND workshopId = ? AND type = 'waitlist'";
-                $backToWaitingStmt = $con->prepare($backToWaitingSql);
-                $backToWaitingStmt->bind_param("ii", $expired['id'], $expired['workshopId']);
-                $backToWaitingStmt->execute();
-                
-                $con->commit();
-                
-                // שליחת אימייל על פקיעת תוקף - רק אם המייל זמין
-                if (function_exists('mail')) {
-                    $subject = "פג תוקף ההזדמנות - TasteCraft";
-                    $emailMessage = "שלום {$expired['Fname']}, למרבה הצער פג תוקף הזמן לאישור השתתפותך בסדנה '{$expired['workshopName']}'. חזרת לרשימת ההמתנה ונעדכן אותך על הזדמנויות חדשות.";
-                    $headers = "From: noreply@tastecraft.com\r\n";
-                    @mail($expired['Email'], $subject, $emailMessage, $headers);
+                // Check if this is the only user in waitlist
+                if ($expired['other_waitlist_users'] == 0) {
+                    // Renew the 24-hour period
+                    $renewSql = "UPDATE notifications 
+                               SET createdAt = NOW(),
+                                   message = CONCAT('🔄 הוארכה תקופת ההרשמה ב-24 שעות נוספות! - ', NOW())
+                               WHERE notificationId = ?";
+                    $renewStmt = $con->prepare($renewSql);
+                    $renewStmt->bind_param("i", $expired['notificationId']);
+                    $renewStmt->execute();
+                    
+                    // Send renewal email
+                    if (function_exists('mail')) {
+                        $subject = "🎉 קיבלת 24 שעות נוספות! - TasteCraft";
+                        $emailMessage = "שלום {$expired['Fname']},\n\n" .
+                                      "מכיוון שאתה היחיד ברשימת ההמתנה לסדנה '{$expired['workshopName']}', ".
+                                      "קיבלת 24 שעות נוספות לאשר את השתתפותך!\n\n" .
+                                      "לאישור: היכנס לפרופיל האישי שלך באתר.\n\n" .
+                                      "שים לב: אם לא תאשר בתוך 24 השעות הנוספות, ההזדמנות תפקע.\n\n" .
+                                      "בברכה,\nצוות TasteCraft";
+                        
+                        $headers = "From: noreply@tastecraft.com\r\n";
+                        @mail($expired['Email'], $subject, $emailMessage, $headers);
+                        error_log("DEBUG: AUTO - Sent renewal email to {$expired['Email']}");
+                    }
+                } else {
+                    // Regular expiration process
+                    $updateExpiredSql = "UPDATE notifications 
+                                        SET status = 'expired' 
+                                        WHERE notificationId = ?";
+                    $updateExpiredStmt = $con->prepare($updateExpiredSql);
+                    $updateExpiredStmt->bind_param("i", $expired['notificationId']);
+                    $updateExpiredStmt->execute();
+                    
+                    // Return user to waiting status
+                    $backToWaitingSql = "UPDATE notifications 
+                                        SET status = 'waiting',
+                                            message = CONCAT(message, ' - חזר לרשימה כי פג תוקף ב: ', NOW()),
+                                            createdAt = NOW()
+                                        WHERE id = ? AND workshopId = ? AND type = 'waitlist'";
+                    $backToWaitingStmt = $con->prepare($backToWaitingSql);
+                    $backToWaitingStmt->bind_param("ii", $expired['id'], $expired['workshopId']);
+                    $backToWaitingStmt->execute();
+                    
+                    if (function_exists('mail')) {
+                        $subject = "פג תוקף ההזדמנות - TasteCraft";
+                        $emailMessage = "שלום {$expired['Fname']},\n\n" .
+                                      "פג תוקף הזמן לאישור השתתפותך בסדנה '{$expired['workshopName']}'.\n" .
+                                      "חזרת לרשימת ההמתנה ונעדכן אותך על הזדמנויות חדשות.\n\n" .
+                                      "בברכה,\nצוות TasteCraft";
+                        
+                        $headers = "From: noreply@tastecraft.com\r\n";
+                        @mail($expired['Email'], $subject, $emailMessage, $headers);
+                    }
+                    
+                    // Notify next person in waitlist
+                    automaticNotifyNextInWaitlist($con, $expired['workshopId']);
                 }
                 
-                // כעת המקום משוחרר - שליחת הודעה למשתמש הבא ברשימה
-                automaticNotifyNextInWaitlist($con, $expired['workshopId']);
+                $con->commit();
                 
             } catch (Exception $e) {
                 error_log("ERROR in handleExpiredNotificationsAutomatically: " . $e->getMessage());
@@ -328,5 +343,38 @@ function safeCleanupNotifications($con) {
         error_log("ERROR in safeCleanupNotifications: " . $e->getMessage());
         $con->rollback();
     }
+}
+
+function getAvailableSeats($con, $workshopId) {
+    $capacitySql = "SELECT w.maxParticipants, 
+                    COUNT(DISTINCT r.registrationId) AS registeredCount,
+                    COUNT(DISTINCT CASE 
+                        WHEN n.status = 'notified' AND n.type = 'spot_available_24h' 
+                        AND n.createdAt > DATE_SUB(NOW(), INTERVAL 24 HOUR) 
+                        THEN n.id END) AS lockedSeats
+                    FROM workshops w
+                    LEFT JOIN registration r ON w.workshopId = r.workshopId
+                    LEFT JOIN notifications n ON w.workshopId = n.workshopId
+                    WHERE w.workshopId = ?
+                    GROUP BY w.workshopId";
+    
+    $stmt = $con->prepare($capacitySql);
+    $stmt->bind_param("i", $workshopId);
+    $stmt->execute();
+    $result = $stmt->get_result();
+    
+    if ($row = $result->fetch_assoc()) {
+        $totalOccupied = intval($row['registeredCount']);
+        $lockedSeats = intval($row['lockedSeats']);
+        $maxParticipants = intval($row['maxParticipants']);
+        return [
+            'available' => $maxParticipants - ($totalOccupied + $lockedSeats),
+            'registered' => $totalOccupied,
+            'locked' => $lockedSeats,
+            'max' => $maxParticipants
+        ];
+    }
+    
+    return ['available' => 0, 'registered' => 0, 'locked' => 0, 'max' => 0];
 }
 ?>

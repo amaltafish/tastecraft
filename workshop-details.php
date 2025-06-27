@@ -61,6 +61,11 @@ $hoursRemaining24h = $workshopData['hoursRemaining24h'] ?? null;
 // הודעות
 $successMessage = $_GET['success'] ?? null;
 $errorMessage = $_GET['error'] ?? null;
+
+// Get workshop details and waitlist status
+$seats = getAvailableSeats($con, $workshopId);
+$hasAvailableSeats = $seats['available'] > 0;
+$isNotLocked = $seats['locked'] == 0;
 ?>
 
 <!DOCTYPE html>
@@ -96,3 +101,7 @@ $errorMessage = $_GET['error'] ?? null;
     <?php endif; ?>
 </body>
 </html>
+
+<?php if (!$isRegistered && !$isInCart && !$isPastWorkshop && $hasAvailableSeats && $isNotLocked): ?>
+    <a href="cart.php?action=add&workshopId=<?php echo $workshopId; ?>" class="btn btn-primary">הוסף לסל</a>
+<?php endif; ?>

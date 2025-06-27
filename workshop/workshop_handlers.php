@@ -1,6 +1,8 @@
 <?php
 // workshop/workshop_handlers.php - טיפול בפעולות POST
 
+require_once __DIR__ . '/../email_config.php';
+
 function handleWorkshopActions($con, $userId, $workshopId) {
     $result = ['redirect' => false, 'params' => []];
     
@@ -25,16 +27,19 @@ function handleJoinWaitlist($con, $userId, $workshopId) {
     $checkResult = $checkWaitlistStmt->get_result();
     
     if ($checkResult->num_rows == 0) {
-        // שליפת שם הסדנה
-        $workshopNameSql = "SELECT workshopName FROM workshops WHERE workshopId = ?";
-        $workshopNameStmt = $con->prepare($workshopNameSql);
-        $workshopNameStmt->bind_param("i", $workshopId);
-        $workshopNameStmt->execute();
-        $workshopNameResult = $workshopNameStmt->get_result();
+        // שליפת פרטי הסדנה והמשתמש
+        $detailsSql = "SELECT w.*, u.Fname, u.Email 
+                      FROM workshops w 
+                      JOIN users u ON u.id = ? 
+                      WHERE w.workshopId = ?";
+        $detailsStmt = $con->prepare($detailsSql);
+        $detailsStmt->bind_param("ii", $userId, $workshopId);
+        $detailsStmt->execute();
+        $detailsResult = $detailsStmt->get_result();
         
-        if ($workshopNameResult->num_rows > 0) {
-            $workshopInfo = $workshopNameResult->fetch_assoc();
-            $waitlistMessage = "נרשמת לרשימת המתנה לסדנה: " . $workshopInfo['workshopName'];
+        if ($detailsResult->num_rows > 0) {
+            $details = $detailsResult->fetch_assoc();
+            $waitlistMessage = "נרשמת לרשימת המתנה לסדנה: " . $details['workshopName'];
             
             $addWaitlistSql = "INSERT INTO notifications (id, workshopId, message, type, status, createdAt) VALUES (?, ?, ?, 'waitlist', 'waiting', NOW())";
             $addWaitlistStmt = $con->prepare($addWaitlistSql);
@@ -42,9 +47,21 @@ function handleJoinWaitlist($con, $userId, $workshopId) {
             
             if ($addWaitlistStmt->execute()) {
                 error_log("DEBUG: Successfully added user $userId to waitlist for workshop $workshopId");
+                
+                // Send confirmation email
+                $emailData = [
+                    'userName' => $details['Fname'],
+                    'workshopName' => $details['workshopName'],
+                    'location' => $details['location'],
+                    'date' => $details['date']
+                ];
+                
+                $template = getEmailTemplate('waitlist_registration', $emailData);
+                sendEmail($details['Email'], $template['subject'], $template['body']);
+                
                 return [
                     'redirect' => true,
-                    'params' => ['success' => 'נוספת בהצלחה לרשימת ההמתנה!']
+                    'params' => ['success' => 'נוספת בהצלחה לרשימת ההמתנה! שלחנו לך אישור במייל.']
                 ];
             } else {
                 error_log("ERROR: Failed to add user $userId to waitlist: " . $addWaitlistStmt->error);

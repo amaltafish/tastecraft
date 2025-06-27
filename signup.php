@@ -7,26 +7,22 @@ if (!$con) {
     die("Database connection failed: " . mysqli_error($con));
 }
 
-if (isset($_POST['bt']) && $_POST['id'] != null && $_POST['Fname'] != null && $_POST['Lname'] != null && $_POST['Email'] != null && $_POST['password'] != null) {
-    $id = $_POST['id'];
+if (isset($_POST['bt']) && $_POST['Fname'] != null && $_POST['Lname'] != null && $_POST['Email'] != null && $_POST['password'] != null) {
     $Fname = $_POST['Fname'];
     $Lname = $_POST['Lname'];
     $Email = $_POST['Email'];
-    
-    // ✅ חזרה לסיסמה לא מוצפנת
     $pass = $_POST['password'];
-    
     $code = $_POST['code'];
 
-    // 🔒 תיקון: prepared statement
-    $sql = "SELECT * FROM users WHERE id = ? OR Email = ?";
+    // Check if email already exists
+    $sql = "SELECT * FROM users WHERE Email = ?";
     $stmt = $con->prepare($sql);
-    $stmt->bind_param("is", $id, $Email);
+    $stmt->bind_param("s", $Email);
     $stmt->execute();
     $result = $stmt->get_result();
     
     if ($result->num_rows > 0) {
-        echo "<script>alert('User with the given ID or Email already exists.');</script>";
+        echo "<script>alert('User with this email already exists.');</script>";
     } else {
         if ($code == '12345') {
             $flag = 1;
@@ -34,10 +30,10 @@ if (isset($_POST['bt']) && $_POST['id'] != null && $_POST['Fname'] != null && $_
             $flag = 0;
         }
 
-        // 🔒 תיקון: prepared statement להכנסה
-        $sql = "INSERT INTO users (id, Fname, Lname, Email, Password, flag) VALUES (?, ?, ?, ?, ?, ?)";
+        // Insert new user with auto-incrementing ID
+        $sql = "INSERT INTO users (Fname, Lname, Email, Password, flag) VALUES (?, ?, ?, ?, ?)";
         $stmt = $con->prepare($sql);
-        $stmt->bind_param("issssi", $id, $Fname, $Lname, $Email, $pass, $flag);
+        $stmt->bind_param("ssssi", $Fname, $Lname, $Email, $pass, $flag);
         
         if ($stmt->execute()) {
             header('Location: login.php');
@@ -149,8 +145,6 @@ if (isset($_POST['bt']) && $_POST['id'] != null && $_POST['Fname'] != null && $_
     <div class="content">
         <form method="post">
             <div class="title">Sign-up</div><br><br>
-            <label for="id">ID</label><br>
-            <input type="number" name="id" id="id" required placeholder="Enter your ID" /><br>
             <label for="Fname">First Name</label><br>
             <input type="text" name="Fname" id="Fname" required placeholder="Enter your first name" /><br>
             <label for="Lname">Last Name</label><br>
@@ -169,7 +163,6 @@ if (isset($_POST['bt']) && $_POST['id'] != null && $_POST['Fname'] != null && $_
 
     <script>
         document.addEventListener('DOMContentLoaded', function() {
-            const idField = document.getElementById('id');
             const FnameField = document.getElementById('Fname');
             const LnameField = document.getElementById('Lname');
             const emailField = document.getElementById('Email');
@@ -177,14 +170,16 @@ if (isset($_POST['bt']) && $_POST['id'] != null && $_POST['Fname'] != null && $_
             const signupBtn = document.getElementById('signupBtn');
 
             function checkFields() {
-                if (idField.value.trim() !== '' && FnameField.value.trim() !== '' && LnameField.value.trim() !== '' && emailField.value.trim() !== '' && passwordField.value.trim() !== '') {
+                if (FnameField.value.trim() !== '' && 
+                    LnameField.value.trim() !== '' && 
+                    emailField.value.trim() !== '' && 
+                    passwordField.value.trim() !== '') {
                     signupBtn.disabled = false;
                 } else {
                     signupBtn.disabled = true;
                 }
             }
 
-            idField.addEventListener('input', checkFields);
             FnameField.addEventListener('input', checkFields);
             LnameField.addEventListener('input', checkFields);
             emailField.addEventListener('input', checkFields);

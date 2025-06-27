@@ -53,10 +53,11 @@
             <?php while ($reg = $registrations->fetch_assoc()): 
                 $workshopDate = new DateTime($reg['date']);
                 $currentDate = new DateTime();
-                $isPast = $workshopDate < $currentDate;
                 $interval = $currentDate->diff($workshopDate);
                 $hoursRemaining = ($interval->days * 24) + $interval->h;
-                $canCancel = $hoursRemaining >= 48 && $workshopDate > $currentDate;
+                $canCancelWithRefund = $workshopDate > $currentDate && $hoursRemaining >= 48;
+                $canCancelNoRefund = $workshopDate > $currentDate && $hoursRemaining < 48;
+                $isPast = $workshopDate <= $currentDate;
             ?>
                 <div class="workshop-card <?php echo $isPast ? 'past-workshop' : ''; ?>">
                     <img src="<?php echo $reg['img']; ?>" alt="<?php echo $reg['workshopName']; ?>" class="workshop-image">
@@ -67,61 +68,77 @@
                                 <span class="status-tag status-completed">הושלם</span>
                             <?php else: ?>
                                 <span class="status-tag status-upcoming">עתידי</span>
+                                <?php if ($hoursRemaining < 48): ?>
+                                    <span class="status-tag status-urgent">פחות מ-48 שעות לסדנה</span>
+                                <?php endif; ?>
                             <?php endif; ?>
                         </div>
                         <div class="workshop-info">תאריך: <?php echo date('d/m/Y', strtotime($reg['date'])); ?></div>
                         <div class="workshop-info">שעה: <?php echo date('H:i', strtotime($reg['date'])); ?></div>
                         <div class="workshop-info">מיקום: <?php echo $reg['location']; ?></div>
                         <div class="workshop-info">סכום ששולם: ₪<?php echo $reg['amountPaid']; ?></div>
-                        
-                        <div class="workshop-actions">
-                            <?php if ($canCancel): ?>
-                                <form method="post" action="" style="display: inline-block;">
-                                    <input type="hidden" name="registrationId" value="<?php echo $reg['registrationId']; ?>">
-                                    <input type="hidden" name="workshopId" value="<?php echo $reg['workshopId']; ?>">
-                                    <input type="hidden" name="amountPaid" value="<?php echo $reg['amountPaid']; ?>">
-                                    <button type="submit" name="cancelRegistration" class="btn-cancel" onclick="return confirm('האם אתה בטוח שברצונך לבטל את ההרשמה? תקבל החזר של 80% מהסכום.')">בטל הרשמה</button>
-                                </form>
-                            <?php endif; ?>
-                            
-                            <?php if ($isPast && $reg['hasReview'] == 0): ?>
-                                <button class="btn-review" onclick="showReviewForm(<?php echo $reg['workshopId']; ?>)">כתוב חוות דעת</button>
-                            <?php elseif ($isPast && $reg['hasReview'] > 0): ?>
-                                <button class="btn-review" onclick="showReviewForm(<?php echo $reg['workshopId']; ?>)">ערוך חוות דעת</button>
-                            <?php endif; ?>
-                        </div>
-                        
-                        <!-- טופס חוות דעת -->
-                        <div id="review-form-<?php echo $reg['workshopId']; ?>" class="review-form">
-                            <h3>חוות דעת על <?php echo $reg['workshopName']; ?></h3>
-                            <form method="post" action="">
+                    </div>
+                    
+                    <div class="workshop-actions">
+                        <?php if ($canCancelWithRefund): ?>
+                            <form method="post" style="display: inline-block;">
+                                <input type="hidden" name="registrationId" value="<?php echo $reg['registrationId']; ?>">
                                 <input type="hidden" name="workshopId" value="<?php echo $reg['workshopId']; ?>">
-                                
-                                <div class="form-group">
-                                    <label>דירוג:</label>
-                                    <div class="stars">
-                                        <input type="radio" id="star5-<?php echo $reg['workshopId']; ?>" name="rating" value="5" required>
-                                        <label for="star5-<?php echo $reg['workshopId']; ?>">★</label>
-                                        <input type="radio" id="star4-<?php echo $reg['workshopId']; ?>" name="rating" value="4">
-                                        <label for="star4-<?php echo $reg['workshopId']; ?>">★</label>
-                                        <input type="radio" id="star3-<?php echo $reg['workshopId']; ?>" name="rating" value="3">
-                                        <label for="star3-<?php echo $reg['workshopId']; ?>">★</label>
-                                        <input type="radio" id="star2-<?php echo $reg['workshopId']; ?>" name="rating" value="2">
-                                        <label for="star2-<?php echo $reg['workshopId']; ?>">★</label>
-                                        <input type="radio" id="star1-<?php echo $reg['workshopId']; ?>" name="rating" value="1">
-                                        <label for="star1-<?php echo $reg['workshopId']; ?>">★</label>
-                                    </div>
-                                </div>
-                                
-                                <div class="form-group">
-                                    <label for="comment-<?php echo $reg['workshopId']; ?>">תגובה:</label>
-                                    <textarea id="comment-<?php echo $reg['workshopId']; ?>" name="comment" rows="3" required></textarea>
-                                </div>
-                                
-                                <button type="submit" name="submitReview">שלח חוות דעת</button>
-                                <button type="button" onclick="hideReviewForm(<?php echo $reg['workshopId']; ?>)">ביטול</button>
+                                <input type="hidden" name="amountPaid" value="<?php echo $reg['amountPaid']; ?>">
+                                <input type="hidden" name="cancellationType" value="with_refund">
+                                <button type="submit" name="cancelRegistration" class="btn-cancel" onclick="return confirm('האם אתה בטוח שברצונך לבטל את ההרשמה לסדנה? תקבל החזר של 80% מהסכום ששולם.');">
+                                    ❌ בטל הרשמה (כולל החזר כספי)
+                                </button>
                             </form>
-                        </div>
+                        <?php elseif ($canCancelNoRefund): ?>
+                            <form method="post" style="display: inline-block;">
+                                <input type="hidden" name="registrationId" value="<?php echo $reg['registrationId']; ?>">
+                                <input type="hidden" name="workshopId" value="<?php echo $reg['workshopId']; ?>">
+                                <input type="hidden" name="amountPaid" value="<?php echo $reg['amountPaid']; ?>">
+                                <input type="hidden" name="cancellationType" value="no_refund">
+                                <button type="submit" name="cancelRegistration" class="btn-cancel" onclick="return confirm('שים לב: ביטול הרשמה פחות מ-48 שעות לפני הסדנה אינו מזכה בהחזר כספי. האם אתה בטוח שברצונך לבטל?');">
+                                    ❌ בטל הרשמה (ללא החזר כספי)
+                                </button>
+                            </form>
+                        <?php endif; ?>
+                        
+                        <?php if ($isPast && !$reg['hasReview']): ?>
+                            <button class="btn-review" onclick="showReviewForm(<?php echo $reg['workshopId']; ?>)">כתוב חוות דעת</button>
+                        <?php elseif ($isPast && $reg['hasReview']): ?>
+                            <button class="btn-review" onclick="showReviewForm(<?php echo $reg['workshopId']; ?>)">ערוך חוות דעת</button>
+                        <?php endif; ?>
+                    </div>
+                    
+                    <!-- טופס חוות דעת -->
+                    <div id="review-form-<?php echo $reg['workshopId']; ?>" class="review-form">
+                        <h3>חוות דעת על <?php echo $reg['workshopName']; ?></h3>
+                        <form method="post" action="">
+                            <input type="hidden" name="workshopId" value="<?php echo $reg['workshopId']; ?>">
+                            
+                            <div class="form-group">
+                                <label>דירוג:</label>
+                                <div class="stars">
+                                    <input type="radio" id="star5-<?php echo $reg['workshopId']; ?>" name="rating" value="5" required>
+                                    <label for="star5-<?php echo $reg['workshopId']; ?>">★</label>
+                                    <input type="radio" id="star4-<?php echo $reg['workshopId']; ?>" name="rating" value="4">
+                                    <label for="star4-<?php echo $reg['workshopId']; ?>">★</label>
+                                    <input type="radio" id="star3-<?php echo $reg['workshopId']; ?>" name="rating" value="3">
+                                    <label for="star3-<?php echo $reg['workshopId']; ?>">★</label>
+                                    <input type="radio" id="star2-<?php echo $reg['workshopId']; ?>" name="rating" value="2">
+                                    <label for="star2-<?php echo $reg['workshopId']; ?>">★</label>
+                                    <input type="radio" id="star1-<?php echo $reg['workshopId']; ?>" name="rating" value="1">
+                                    <label for="star1-<?php echo $reg['workshopId']; ?>">★</label>
+                                </div>
+                            </div>
+                            
+                            <div class="form-group">
+                                <label for="comment-<?php echo $reg['workshopId']; ?>">תגובה:</label>
+                                <textarea id="comment-<?php echo $reg['workshopId']; ?>" name="comment" rows="3" required></textarea>
+                            </div>
+                            
+                            <button type="submit" name="submitReview">שלח חוות דעת</button>
+                            <button type="button" onclick="hideReviewForm(<?php echo $reg['workshopId']; ?>)">ביטול</button>
+                        </form>
                     </div>
                 </div>
             <?php endwhile; ?>
@@ -237,11 +254,17 @@
         <div class="card-title">התראות</div>
         <?php if (!empty($notificationsArray)): ?>
             <?php foreach ($notificationsArray as $notification): ?>
-                <div class="notification-item <?php echo $notification['status'] == 'unread' ? 'notification-new' : ''; ?> <?php echo $notification['is_urgent'] == 1 ? 'notification-urgent' : ''; ?>">
+                <div class="notification-item <?php echo $notification['status'] == 'unread' ? 'notification-new' : ''; ?> 
+                             <?php echo $notification['is_urgent'] == 1 ? 'notification-urgent' : ''; ?>
+                             <?php echo strpos($notification['message'], 'הוארכה תקופת ההרשמה') !== false ? 'notification-renewed' : ''; ?>">
                     
                     <?php if ($notification['is_urgent'] == 1 && $notification['hours_remaining'] > 0): ?>
                         <div class="urgent-timer">
-                            ⏰ נותרו <?php echo $notification['hours_remaining']; ?> שעות לאישור!
+                            <?php if (strpos($notification['message'], 'הוארכה תקופת ההרשמה') !== false): ?>
+                                🔄 הוארכה ההזדמנות! נותרו <?php echo $notification['hours_remaining']; ?> שעות נוספות
+                            <?php else: ?>
+                                ⏰ נותרו <?php echo $notification['hours_remaining']; ?> שעות לאישור!
+                            <?php endif; ?>
                         </div>
                     <?php endif; ?>
                     
@@ -249,19 +272,41 @@
                     <div class="notification-text">
                         <strong><?php echo $notification['workshopName'] ? $notification['workshopName'] . ': ' : ''; ?></strong>
                         <?php echo $notification['message']; ?>
+                        
+                        <?php if ($notification['type'] == 'spot_available_24h' && 
+                                 $notification['status'] == 'unread' && 
+                                 $notification['hours_remaining'] > 0): ?>
+                            <div class="notification-extra-info">
+                                <?php 
+                                $otherWaitlistUsers = isset($notification['other_waitlist_users']) ? 
+                                    intval($notification['other_waitlist_users']) : 0;
+                                if ($otherWaitlistUsers == 0): ?>
+                                    <p class="auto-renewal-notice">
+                                        💡 אתה היחיד ברשימת ההמתנה! אם לא תספיק לאשר, 
+                                        תקבל אוטומטית 24 שעות נוספות.
+                                    </p>
+                                <?php endif; ?>
+                            </div>
+                        <?php endif; ?>
                     </div>
                     
-                    <?php if ($notification['type'] == 'spot_available_24h' && $notification['status'] == 'unread' && $notification['hours_remaining'] > 0): ?>
+                    <?php if ($notification['type'] == 'spot_available_24h' && 
+                             $notification['status'] == 'unread' && 
+                             $notification['hours_remaining'] > 0): ?>
                         <div class="notification-actions">
                             <form method="post" action="" style="display: inline;">
                                 <input type="hidden" name="notificationId" value="<?php echo $notification['notificationId']; ?>">
                                 <input type="hidden" name="workshopId" value="<?php echo $notification['workshopId']; ?>">
-                                <button type="submit" name="confirmWaitlistSpot" class="btn-small btn-confirm">✅ אשר השתתפות</button>
+                                <button type="submit" name="confirmWaitlistSpot" class="btn-small btn-confirm">
+                                    ✅ אשר והמשך לתשלום
+                                </button>
                             </form>
                             <form method="post" action="" style="display: inline;">
                                 <input type="hidden" name="notificationId" value="<?php echo $notification['notificationId']; ?>">
                                 <input type="hidden" name="workshopId" value="<?php echo $notification['workshopId']; ?>">
-                                <button type="submit" name="declineWaitlistSpot" class="btn-small btn-decline">❌ דחה</button>
+                                <button type="submit" name="declineWaitlistSpot" class="btn-small btn-decline">
+                                    ❌ דחה הזדמנות
+                                </button>
                             </form>
                         </div>
                     <?php endif; ?>

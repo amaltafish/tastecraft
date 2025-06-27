@@ -66,11 +66,13 @@ function handleConfirmWaitlistSpot($con, $userId, $postData) {
         
         return [
             'redirect' => true,
+            'location' => 'cart.php',
             'params' => ['success' => 'אישרת בהצלחה את השתתפותך! הסדנה נוספה לסל הקניות שלך.']
         ];
     } else {
         return [
             'redirect' => true,
+            'location' => 'profile.php',
             'params' => ['error' => 'פג תוקף ההזדמנות או שההתראה לא נמצאה.']
         ];
     }
@@ -127,28 +129,46 @@ function handleCancelWaitlist($con, $userId, $postData) {
     $notificationId = intval($postData['notificationId']);
     $workshopId = intval($postData['workshopId']);
     
-    // 🔒 תיקון: prepared statement למחיקה מרשימת המתנה
-    $deleteWaitlistSql = "DELETE FROM notifications 
-                         WHERE notificationId = ? AND id = ? AND type = 'waitlist'";
-    $deleteWaitlistStmt = $con->prepare($deleteWaitlistSql);
-    $deleteWaitlistStmt->bind_param("ii", $notificationId, $userId);
+    $con->begin_transaction();
     
-    if ($deleteWaitlistStmt->execute()) {
-        // 🔒 תיקון: prepared statement למחיקת התראה 24h
-        $checkNotifiedSql = "DELETE FROM notifications 
-                            WHERE id = ? AND workshopId = ? AND type = 'spot_available_24h' AND status = 'unread'";
-        $checkNotifiedStmt = $con->prepare($checkNotifiedSql);
-        $checkNotifiedStmt->bind_param("ii", $userId, $workshopId);
-        $checkNotifiedStmt->execute();
+    try {
+        // 🔒 תיקון: prepared statement למחיקה מרשימת המתנה
+        $deleteWaitlistSql = "DELETE FROM notifications 
+                            WHERE notificationId = ? AND id = ? AND type = 'waitlist'";
+        $deleteWaitlistStmt = $con->prepare($deleteWaitlistSql);
+        $deleteWaitlistStmt->bind_param("ii", $notificationId, $userId);
         
-        // שליחת הודעה למשתמש הבא ברשימה
-        automaticNotifyNextInWaitlist($con, $workshopId);
-        
-        return [
-            'redirect' => true,
-            'params' => ['success' => 'הוסרת בהצלחה מרשימת ההמתנה. המקום הועבר למשתמש הבא ברשימה.']
-        ];
-    } else {
+        if ($deleteWaitlistStmt->execute()) {
+            // 🔒 תיקון: prepared statement למחיקת התראה 24h
+            $checkNotifiedSql = "DELETE FROM notifications 
+                                WHERE id = ? AND workshopId = ? AND type = 'spot_available_24h' AND status = 'unread'";
+            $checkNotifiedStmt = $con->prepare($checkNotifiedSql);
+            $checkNotifiedStmt->bind_param("ii", $userId, $workshopId);
+            $checkNotifiedStmt->execute();
+            
+            // Clean up statements
+            $deleteWaitlistStmt->close();
+            $checkNotifiedStmt->close();
+            
+            $con->commit();
+            
+            // Only notify next in waitlist after successful commit
+            automaticNotifyNextInWaitlist($con, $workshopId);
+            
+            return [
+                'redirect' => true,
+                'params' => ['success' => 'הוסרת בהצלחה מרשימת ההמתנה. המקום הועבר למשתמש הבא ברשימה.']
+            ];
+        } else {
+            $con->rollback();
+            return [
+                'redirect' => true,
+                'params' => ['error' => 'שגיאה בהסרה מרשימת ההמתנה.']
+            ];
+        }
+    } catch (Exception $e) {
+        $con->rollback();
+        error_log("Error in handleCancelWaitlist: " . $e->getMessage());
         return [
             'redirect' => true,
             'params' => ['error' => 'שגיאה בהסרה מרשימת ההמתנה.']
@@ -212,6 +232,9 @@ function handleCancelRegistration($con, $userId, $postData) {
     $registrationId = intval($postData['registrationId']);
     $workshopId = intval($postData['workshopId']);
     $amountPaid = floatval($postData['amountPaid']);
+    $cancellationType = $postData['cancellationType'] ?? 'with_refund';
+    
+    error_log("DEBUG: Starting cancellation for registration $registrationId, workshop $workshopId, user $userId");
     
     // 🔒 תיקון: prepared statement לבדיקת תאריך הסדנה
     $checkSql = "SELECT w.date, w.workshopName FROM workshops w WHERE w.workshopId = ?";
@@ -221,46 +244,84 @@ function handleCancelRegistration($con, $userId, $postData) {
     $checkResult = $checkStmt->get_result();
     $workshop = $checkResult->fetch_assoc();
     
+    error_log("DEBUG: Workshop details - Name: {$workshop['workshopName']}, Date: {$workshop['date']}");
+    
     $workshopDate = new DateTime($workshop['date']);
     $currentDate = new DateTime();
     $interval = $currentDate->diff($workshopDate);
     $hoursRemaining = ($interval->days * 24) + $interval->h;
     
-    if ($hoursRemaining >= 48 && $workshopDate > $currentDate) {
-        // חישוב החזר 80% מהסכום ששולם
-        $refundAmount = $amountPaid * 0.8;
+    error_log("DEBUG: Hours remaining until workshop: $hoursRemaining");
+    
+    // וידוא שהסדנה עוד לא התחילה
+    if ($workshopDate > $currentDate) {
+        // קביעת סכום ההחזר לפי סוג הביטול
+        $refundAmount = 0;
+        if ($cancellationType === 'with_refund' && $hoursRemaining >= 48) {
+            $refundAmount = $amountPaid * 0.8;
+        }
         
-        // 🔒 תיקון: prepared statement למחיקת הרשומה
-        $deleteSql = "DELETE FROM registration WHERE registrationId = ? AND id = ?";
-        $deleteStmt = $con->prepare($deleteSql);
-        $deleteStmt->bind_param("ii", $registrationId, $userId);
+        error_log("DEBUG: Cancellation type: $cancellationType, Refund amount: $refundAmount");
         
-        if ($deleteStmt->execute()) {
-            // 🔒 תיקון: prepared statement לתיעוד ההחזר
-            $refundMessage = "החזר כספי בסך ₪" . $refundAmount . " עבור ביטול סדנה: " . $workshop['workshopName'];
-            $adminNotifSql = "INSERT INTO notifications (id, workshopId, message, type, status, createdAt) 
-                              VALUES (1, ?, ?, 'refund', 'unread', NOW())";
-            $adminNotifStmt = $con->prepare($adminNotifSql);
-            $adminNotifStmt->bind_param("is", $workshopId, $refundMessage);
-            $adminNotifStmt->execute();
+        // Start transaction
+        $con->begin_transaction();
+        
+        try {
+            // 🔒 תיקון: prepared statement למחיקת הרשומה
+            $deleteSql = "DELETE FROM registration WHERE registrationId = ? AND id = ?";
+            $deleteStmt = $con->prepare($deleteSql);
+            $deleteStmt->bind_param("ii", $registrationId, $userId);
             
-            // בדיקה אם יש אנשים ברשימת המתנה לסדנה זו והודעה למשתמש הראשון
-            automaticNotifyNextInWaitlist($con, $workshopId);
-            
+            if ($deleteStmt->execute()) {
+                error_log("DEBUG: Successfully deleted registration record");
+                
+                // הוספת התראה למנהל על החזר כספי אם נדרש
+                if ($refundAmount > 0) {
+                    $refundMessage = "החזר כספי בסך ₪" . $refundAmount . " עבור ביטול סדנה: " . $workshop['workshopName'];
+                    $adminNotifSql = "INSERT INTO notifications (id, workshopId, message, type, status, createdAt) 
+                                    VALUES (1, ?, ?, 'refund', 'unread', NOW())";
+                    $adminNotifStmt = $con->prepare($adminNotifSql);
+                    $adminNotifStmt->bind_param("is", $workshopId, $refundMessage);
+                    $adminNotifStmt->execute();
+                    error_log("DEBUG: Created refund notification for admin");
+                }
+                
+                $con->commit();
+                error_log("DEBUG: Transaction committed successfully");
+                
+                // Now notify next person in waitlist
+                error_log("DEBUG: Attempting to notify next person in waitlist");
+                automaticNotifyNextInWaitlist($con, $workshopId);
+                
+                $successMessage = $refundAmount > 0 ? 
+                    "ההרשמה בוטלה בהצלחה. סכום החזר: ₪" . $refundAmount :
+                    "ההרשמה בוטלה בהצלחה. לא ניתן החזר כספי בשל ביטול מאוחר.";
+                
+                return [
+                    'redirect' => true,
+                    'params' => ['success' => $successMessage]
+                ];
+            } else {
+                $con->rollback();
+                error_log("ERROR: Failed to delete registration: " . $deleteStmt->error);
+                return [
+                    'redirect' => true,
+                    'params' => ['error' => 'שגיאה בביטול ההרשמה: ' . $deleteStmt->error]
+                ];
+            }
+        } catch (Exception $e) {
+            $con->rollback();
+            error_log("ERROR in handleCancelRegistration: " . $e->getMessage());
             return [
                 'redirect' => true,
-                'params' => ['success' => 'ההרשמה בוטלה בהצלחה. סכום החזר: ₪' . $refundAmount]
-            ];
-        } else {
-            return [
-                'redirect' => true,
-                'params' => ['error' => 'שגיאה בביטול ההרשמה: ' . $deleteStmt->error]
+                'params' => ['error' => 'שגיאה בביטול ההרשמה']
             ];
         }
     } else {
+        error_log("DEBUG: Cannot cancel - workshop already started");
         return [
             'redirect' => true,
-            'params' => ['error' => 'לא ניתן לבטל הרשמה לסדנה זו - נותרו פחות מ-48 שעות לתחילת הסדנה']
+            'params' => ['error' => 'לא ניתן לבטל הרשמה לסדנה שכבר התחילה']
         ];
     }
 }

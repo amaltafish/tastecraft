@@ -345,4 +345,33 @@ function initAutoRefresh() {
 }
 
 // Initialize auto-refresh
-document.addEventListener('DOMContentLoaded', initAutoRefresh);
+document.addEventListener('DOMContentLoaded', function() {
+    initAutoRefresh();
+    
+    // Modified auto-refresh logic
+    const workshopListTable = document.querySelector('.card table tbody');
+    if (workshopListTable) {
+        setInterval(function() {
+            // Only refresh if we're not in the middle of filling out a form
+            const addForm = document.getElementById('addWorkshopForm');
+            const updateForm = document.getElementById('updateWorkshopForm');
+            const isFormActive = 
+                (addForm && addForm.querySelector(':focus')) || 
+                (updateForm && updateForm.querySelector(':focus'));
+            
+            if (!isFormActive) {
+                fetch(window.location.href)
+                    .then(response => response.text())
+                    .then(html => {
+                        const parser = new DOMParser();
+                        const doc = parser.parseFromString(html, 'text/html');
+                        const newTable = doc.querySelector('.card table tbody');
+                        if (newTable) {
+                            workshopListTable.innerHTML = newTable.innerHTML;
+                            initWorkshopHandlers(); // Reinitialize handlers for new content
+                        }
+                    });
+            }
+        }, 60000); // Still check every minute
+    }
+});
